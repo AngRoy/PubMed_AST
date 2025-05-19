@@ -354,6 +354,11 @@ def process_article(article):
         record[f"Affiliation{author_count}"] = affiliation
         author_count += 1
     
+    # If no authors found, don't skip this article - just assign empty values
+    if author_count == 1:  # No authors were added
+        record["Author1"] = ""
+        record["Affiliation1"] = ""
+    
     return record
 
 def fetch_pubmed_articles(query, batch_size=BATCH_NUM, limit=None, progress_callback=None):
@@ -542,7 +547,7 @@ def check_date_range(df, dataset_type, start_date, end_date):
 
 
 def find_max_author_column(df):
-    """Find the maximum author column that has non-empty values"""
+    """Find the maximum author column that has non-empty values, returns at least 1"""
     max_author = 0
     author_pattern = re.compile(r"^Author(\d+)$")
     
@@ -562,7 +567,8 @@ def find_max_author_column(df):
         if row_max > max_author:
             max_author = row_max
     
-    return max_author
+    # Always return at least 1 to ensure we have Author1 column
+    return max(1, max_author)
 
 def trim_author_columns(df, max_author):
     """Trim excess author columns beyond the maximum needed"""
@@ -929,15 +935,23 @@ def create_author_collaboration_network(df, top_n=20):
     if not author_cols:
         return None
     
-    # Collect all authors
+    # Collect all authors - skip empty or 'Anonymous' authors
     all_authors = []
     for _, row in df.iterrows():
-        paper_authors = [row[col] for col in author_cols if pd.notna(row[col]) and row[col] != '']
+        paper_authors = [row[col] for col in author_cols if pd.notna(row[col]) and row[col] != '' and row[col].lower() != 'anonymous']
         if len(paper_authors) > 1:  # Only consider papers with multiple authors
             all_authors.extend(paper_authors)
     
+    # If no authors were found, return None
+    if not all_authors:
+        return None
+    
     # Count author occurrences
     author_counts = pd.Series(all_authors).value_counts()
+    
+    # If there are no authors or too few unique authors, return None
+    if len(author_counts) < 3:
+        return None
     
     # Get top authors
     top_authors = author_counts.head(top_n).index.tolist()
@@ -1322,22 +1336,26 @@ def extract_statistical_insights(df_before, df_after):
         author_cols_after = [col for col in df_after.columns if col.startswith('Author')]
         
         avg_authors_before = 0
-        avg_authors_after = a = 0
+        avg_authors_after = 0
         
         if author_cols_before:
             # Count non-empty author cells per row
             authors_per_paper_before = df_before[author_cols_before].notna().sum(axis=1)
-            avg_authors_before = authors_per_paper_before.mean()
+            # Filter out papers with no authors to get a meaningful average
+            valid_author_counts = authors_per_paper_before[authors_per_paper_before > 0]
+            avg_authors_before = valid_author_counts.mean() if len(valid_author_counts) > 0 else 0
         
         if author_cols_after:
             authors_per_paper_after = df_after[author_cols_after].notna().sum(axis=1)
-            avg_authors_after = authors_per_paper_after.mean()
+            # Filter out papers with no authors to get a meaningful average
+            valid_author_counts = authors_per_paper_after[authors_per_paper_after > 0]
+            avg_authors_after = valid_author_counts.mean() if len(valid_author_counts) > 0 else 0
         
         if avg_authors_before > 0 and avg_authors_after > 0:
             author_change = avg_authors_after - avg_authors_before
             author_direction = "more" if author_change > 0 else "fewer"
             
-            insights.append(f"Research papers had {author_direction} authors on average after approval ({avg_authors_after:.1f} vs. {avg_authors_before:.1f} authors per paper).")
+            insights.append(f"For articles with author information, research papers had {author_direction} authors on average after approval ({avg_authors_after:.1f} vs. {avg_authors_before:.1f} authors per paper).")
         
         # 4. Abstract length and complexity
         if 'Abstract' in df_before.columns and 'Abstract' in df_after.columns:
@@ -1422,10 +1440,18 @@ def create_hierarchical_excel(df):
                 }
                 authors.append(author_info)
         
+        # Include all articles, even those without authors
         if authors:
             author_data.append({
                 'article': article_info,
                 'authors': authors
+            })
+        else:
+            # For articles without authors, add a single empty author entry
+            # This ensures the article is included in the output
+            author_data.append({
+                'article': article_info,
+                'authors': [{'Author': '', 'Affiliation': ''}]
             })
     
     # Create a new dataframe with the hierarchical structure
@@ -2185,6 +2211,7 @@ if submitted or st.session_state.search_submitted:
                 ### Key Features
                 
                 - **Precision Date Handling**: Uses month-level precision to accurately categorize publications
+                - **Comprehensive Article Inclusion**: Includes all articles, even those without author or affiliation information
                 - **Flexible Date Ranges**: Customizable time periods before and after FDA approval
                 - **Smart Search Strategy**: Includes both brand name and compound name for comprehensive results
                 - **DOI Information**: Includes DOI for each article when available

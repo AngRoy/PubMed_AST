@@ -1774,19 +1774,33 @@ if submitted or st.session_state.search_submitted:
         after_start_date_str = after_start_date.strftime("%Y/%m/%d")
         after_end_date_str = after_end_date.strftime("%Y/%m/%d")
         
-        # Build queries using improved strategy if selected
-        # Build queries using improved strategy if selected
+        # if use_improved_search:
+        #     # Split both drug name and compound into parts
+        #     drug_part = build_query_terms("All Fields", drug_name, use_and=False)
+        #     comp_part = build_query_terms("All Fields", composition, use_and=False)
+        #     disease_part = build_query_terms("All Fields", disease)
+
+        #     query_before = f'(({drug_part}) OR ({comp_part})) AND ({disease_part}) AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])'
+        #     query_after = f'(({drug_part}) OR ({comp_part})) AND ({disease_part})'
+        # else:
+        #     comp_part = build_query_terms("All Fields", composition)
+        #     disease_part = build_query_terms("All Fields", disease)
+            
+        #     query_before = f'({comp_part}) AND ({disease_part}) AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])'
+        #     drug_part = build_query_terms("All Fields", drug_name, use_and=False)
+        #     query_after = f'(({drug_part}) OR ({comp_part})) AND ({disease_part})'
+
         if use_improved_search:
             # Split both drug name and compound into parts
             drug_part = build_query_terms("All Fields", drug_name, use_and=False)
             comp_part = build_query_terms("All Fields", composition, use_and=False)
-            disease_part = build_query_terms("All Fields", disease)
+            disease_part = build_query_terms("All Fields", disease, use_and=False)  # Changed to use_and=False
 
             query_before = f'(({drug_part}) OR ({comp_part})) AND ({disease_part}) AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])'
             query_after = f'(({drug_part}) OR ({comp_part})) AND ({disease_part})'
         else:
-            comp_part = build_query_terms("All Fields", composition)
-            disease_part = build_query_terms("All Fields", disease)
+            comp_part = build_query_terms("All Fields", composition, use_and=False)  # Changed to use_and=False
+            disease_part = build_query_terms("All Fields", disease, use_and=False)  # Changed to use_and=False
             
             query_before = f'({comp_part}) AND ({disease_part}) AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])'
             drug_part = build_query_terms("All Fields", drug_name, use_and=False)

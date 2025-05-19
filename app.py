@@ -24,6 +24,16 @@ from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook import Workbook
 
+def build_query_terms(field, text, use_and=True):
+    """
+    Convert a string into PubMed search terms split by whitespace.
+    E.g., 'breast cancer' → '"breast"[field] AND "cancer"[field]'
+    """
+    words = text.strip().split()
+    operator = " AND " if use_and else " OR "
+    return operator.join([f'"{word}"[{field}]' for word in words])
+
+
 # Configure logging to file instead of displaying on screen
 logging.basicConfig(level=logging.INFO, 
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -1765,26 +1775,30 @@ if submitted or st.session_state.search_submitted:
         after_end_date_str = after_end_date.strftime("%Y/%m/%d")
         
         # Build queries using improved strategy if selected
+        # Build queries using improved strategy if selected
         if use_improved_search:
-            # Use both drug name and composition in both queries for better coverage
-            query_before = (f'("{composition}"[All Fields] OR "{drug_name}"[All Fields]) AND "{disease}"[All Fields] '
-                         f'AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])')
-            
-            query_after = (f'("{drug_name}"[All Fields] OR "{composition}"[All Fields]) '
-                         f'AND "{disease}"[All Fields] ')
+            # Split both drug name and compound into parts
+            drug_part = build_query_terms("All Fields", drug_name, use_and=False)
+            comp_part = build_query_terms("All Fields", composition, use_and=False)
+            disease_part = build_query_terms("All Fields", disease)
+
+            query_before = f'(({drug_part}) OR ({comp_part})) AND ({disease_part}) AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])'
+            query_after = f'(({drug_part}) OR ({comp_part})) AND ({disease_part})'
         else:
-            # Original simpler query strategy
-            query_before = (f'"{composition}"[All Fields] AND "{disease}"[All Fields] '
-                         f'AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])')
+            comp_part = build_query_terms("All Fields", composition)
+            disease_part = build_query_terms("All Fields", disease)
             
-            query_after = (f'("{drug_name}"[All Fields] OR "{composition}"[All Fields]) '
-                         f'AND "{disease}"[All Fields] ')
-        
-        # Add company to query if requested
+            query_before = f'({comp_part}) AND ({disease_part}) AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])'
+            drug_part = build_query_terms("All Fields", drug_name, use_and=False)
+            query_after = f'(({drug_part}) OR ({comp_part})) AND ({disease_part})'
+
+        # Add company if checked
         if include_company:
-            query_after += f'AND "{company}"[All Fields] '
-            
-        query_after += f'AND ("{after_start_date_str}"[pdat] : "{after_end_date_str}"[pdat])'
+            company_part = build_query_terms("All Fields", company)
+            query_after += f' AND ({company_part})'
+
+        query_after += f' AND ("{after_start_date_str}"[pdat] : "{after_end_date_str}"[pdat])'
+
         
         st.subheader("Search Queries")
         st.code(f"Before Approval: {query_before}")

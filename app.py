@@ -1,3 +1,4 @@
+import streamlit as st
 import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -157,14 +158,6 @@ st.markdown("""
 <h1 class="main-header">PubMed Research Analyzer</h1>
 <p class="text-centered">Extract, analyze, and download PubMed articles before and after FDA approval.</p>
 """, unsafe_allow_html=True)
-
-# Helper function to safely check if DataFrame is empty
-def is_dataframe_empty(df):
-    if df is None:
-        return True
-    if not isinstance(df, pd.DataFrame):
-        return True
-    return df.emptyimport streamlit as st
 
 # ------------------ PubMed Retrieval Functions ------------------
 
@@ -361,11 +354,6 @@ def process_article(article):
         record[f"Affiliation{author_count}"] = affiliation
         author_count += 1
     
-    # If no authors found, don't skip this article - just assign empty values
-    if author_count == 1:  # No authors were added
-        record["Author1"] = ""
-        record["Affiliation1"] = ""
-    
     return record
 
 def fetch_pubmed_articles(query, batch_size=BATCH_NUM, limit=None, progress_callback=None):
@@ -554,7 +542,7 @@ def check_date_range(df, dataset_type, start_date, end_date):
 
 
 def find_max_author_column(df):
-    """Find the maximum author column that has non-empty values, returns at least 1"""
+    """Find the maximum author column that has non-empty values"""
     max_author = 0
     author_pattern = re.compile(r"^Author(\d+)$")
     
@@ -574,8 +562,7 @@ def find_max_author_column(df):
         if row_max > max_author:
             max_author = row_max
     
-    # Always return at least 1 to ensure we have Author1 column
-    return max(1, max_author)
+    return max_author
 
 def trim_author_columns(df, max_author):
     """Trim excess author columns beyond the maximum needed"""
@@ -942,23 +929,15 @@ def create_author_collaboration_network(df, top_n=20):
     if not author_cols:
         return None
     
-    # Collect all authors - skip empty or 'Anonymous' authors
+    # Collect all authors
     all_authors = []
     for _, row in df.iterrows():
-        paper_authors = [row[col] for col in author_cols if pd.notna(row[col]) and row[col] != '' and row[col].lower() != 'anonymous']
+        paper_authors = [row[col] for col in author_cols if pd.notna(row[col]) and row[col] != '']
         if len(paper_authors) > 1:  # Only consider papers with multiple authors
             all_authors.extend(paper_authors)
     
-    # If no authors were found, return None
-    if not all_authors:
-        return None
-    
     # Count author occurrences
     author_counts = pd.Series(all_authors).value_counts()
-    
-    # If there are no authors or too few unique authors, return None
-    if len(author_counts) < 3:
-        return None
     
     # Get top authors
     top_authors = author_counts.head(top_n).index.tolist()
@@ -1343,26 +1322,22 @@ def extract_statistical_insights(df_before, df_after):
         author_cols_after = [col for col in df_after.columns if col.startswith('Author')]
         
         avg_authors_before = 0
-        avg_authors_after = 0
+        avg_authors_after = a = 0
         
         if author_cols_before:
             # Count non-empty author cells per row
             authors_per_paper_before = df_before[author_cols_before].notna().sum(axis=1)
-            # Filter out papers with no authors to get a meaningful average
-            valid_author_counts = authors_per_paper_before[authors_per_paper_before > 0]
-            avg_authors_before = valid_author_counts.mean() if len(valid_author_counts) > 0 else 0
+            avg_authors_before = authors_per_paper_before.mean()
         
         if author_cols_after:
             authors_per_paper_after = df_after[author_cols_after].notna().sum(axis=1)
-            # Filter out papers with no authors to get a meaningful average
-            valid_author_counts = authors_per_paper_after[authors_per_paper_after > 0]
-            avg_authors_after = valid_author_counts.mean() if len(valid_author_counts) > 0 else 0
+            avg_authors_after = authors_per_paper_after.mean()
         
         if avg_authors_before > 0 and avg_authors_after > 0:
             author_change = avg_authors_after - avg_authors_before
             author_direction = "more" if author_change > 0 else "fewer"
             
-            insights.append(f"For articles with author information, research papers had {author_direction} authors on average after approval ({avg_authors_after:.1f} vs. {avg_authors_before:.1f} authors per paper).")
+            insights.append(f"Research papers had {author_direction} authors on average after approval ({avg_authors_after:.1f} vs. {avg_authors_before:.1f} authors per paper).")
         
         # 4. Abstract length and complexity
         if 'Abstract' in df_before.columns and 'Abstract' in df_after.columns:
@@ -1447,18 +1422,10 @@ def create_hierarchical_excel(df):
                 }
                 authors.append(author_info)
         
-        # Include all articles, even those without authors
         if authors:
             author_data.append({
                 'article': article_info,
                 'authors': authors
-            })
-        else:
-            # For articles without authors, add a single empty author entry
-            # This ensures the article is included in the output
-            author_data.append({
-                'article': article_info,
-                'authors': [{'Author': '', 'Affiliation': ''}]
             })
     
     # Create a new dataframe with the hierarchical structure
@@ -1674,112 +1641,13 @@ if 'deduped_before' not in st.session_state:
 if 'deduped_after' not in st.session_state:
     st.session_state.deduped_after = 0
     
-    # Function to create a more robust and flexible PubMed search query
-def build_advanced_pubmed_query(drug_name, composition, disease, company, date_range):
-    """
-    Build a comprehensive PubMed query with multiple variations and combinations
-    to maximize relevant article retrieval.
-    
-    Args:
-        drug_name: The commercial drug name
-        composition: The chemical composition/compound name
-        disease: The target disease
-        company: The pharmaceutical company
-        date_range: String with date range in PubMed format
-        
-    Returns:
-        A string containing the complete PubMed query
-    """
-    # Process drug name - handle multiple word drug names
-    drug_terms = []
-    drug_words = drug_name.split()
-    
-    # Add the full drug name
-    drug_terms.append(f'"{drug_name}"[All Fields]')
-    
-    # If drug name has multiple words, add each word separately
-    # This helps catch papers that might only mention part of the name
-    if len(drug_words) > 1:
-        for word in drug_words:
-            if len(word) > 3:  # Only include meaningful words, not short ones
-                drug_terms.append(f'"{word}"[All Fields]')
-    
-    # Process composition - handle multiple word compositions
-    comp_terms = []
-    comp_words = composition.split()
-    
-    # Add the full composition
-    comp_terms.append(f'"{composition}"[All Fields]')
-    
-    # If composition has multiple words, add combinations
-    if len(comp_words) > 1:
-        for word in comp_words:
-            if len(word) > 3:  # Only include meaningful words
-                comp_terms.append(f'"{word}"[All Fields]')
-    
-    # Process disease name - handle various formats and suffixes
-    disease_terms = []
-    disease_words = disease.split()
-    
-    # Basic disease term
-    disease_terms.append(f'"{disease}"[All Fields]')
-    
-    # Try to capture MeSH term if appropriate
-    disease_terms.append(f'"{disease}"[MeSH Terms]')
-    
-    # Add title/abstract variations
-    disease_terms.append(f'"{disease}"[Title/Abstract]')
-    
-    # Add possessive form
-    disease_terms.append(f'"{disease}\'s"[Title/Abstract]')
-    
-    # If disease has multiple words, add key terms
-    if len(disease_words) > 1:
-        for word in disease_words:
-            if len(word) > 3 and word.lower() not in ['and', 'the', 'with']:
-                # Add word with wildcard for variations
-                disease_terms.append(f'"{word}*"[Title/Abstract]')
-    
-    # Process company name
-    company_terms = []
-    
-    # Basic company term
-    if company and company.strip():
-        company_terms.append(f'"{company}"[All Fields]')
-        
-        # Add abbreviated version if company name has multiple words
-        company_words = company.split()
-        if len(company_words) > 2:
-            # Try to create abbreviation (first letter of each word)
-            abbrev = ''.join(word[0] for word in company_words if word[0].isupper())
-            if len(abbrev) >= 2:
-                company_terms.append(f'"{abbrev}"[All Fields]')
-    
-    # Build the query components
-    drug_query = " OR ".join(drug_terms)
-    comp_query = " OR ".join(comp_terms)
-    disease_query = " OR ".join(disease_terms)
-    
-    # Combine the main components
-    main_query = f"({drug_query})"
-    
-    # Add composition
-    if comp_terms:
-        main_query += f" OR ({comp_query})"
-    
-    # Add disease - this is required
-    main_query = f"({main_query}) AND ({disease_query})"
-    
-    # Add company if provided
-    if company_terms:
-        company_query = " OR ".join(company_terms)
-        # Make company optional with lower precedence
-        main_query = f"({main_query}) AND (({company_query}) OR NOT ({company_query}))"
-    
-    # Add date range
-    final_query = f"({main_query}) AND {date_range}"
-    
-    return final_query
+    # Helper function to safely check if DataFrame is empty
+def is_dataframe_empty(df):
+    if df is None:
+        return True
+    if not isinstance(df, pd.DataFrame):
+        return True
+    return df.empty
 
 # Sidebar configuration
 st.sidebar.markdown("### Search Configuration")
@@ -1805,23 +1673,9 @@ with st.sidebar.form("search_form"):
     with col2:
         after_years = st.number_input("Years after FDA approval (max to current)", min_value=1, max_value=50, value=50)
     
-    
     include_company = st.checkbox("Include company in search query", value=False)
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
-    
-    # Add an explanation about the advanced search strategy
-    st.markdown("""
-    <div style="background-color: #1A237E; padding: 10px; border-radius: 5px; margin-top: 10px;">
-    <p style="color: white; margin-bottom: 0;">
-    <strong>📝 Advanced Search Strategy:</strong> The search will use a comprehensive approach that includes:
-    <ul style="color: white; margin-top: 5px;">
-      <li>Multiple variations of drug names and compositions</li>
-      <li>Both MeSH terms and keyword variations for diseases</li>
-      <li>Handling of plurals, possessives, and partial matches</li>
-    </ul>
-    </p>
-    </div>
-    """, unsafe_allow_html=True)
+    use_improved_search = st.checkbox("Use improved search strategy", value=False, help="Include both drug name and compound in both before/after queries")
     
     submitted = st.form_submit_button("Search PubMed")
     
@@ -1884,26 +1738,27 @@ if submitted or st.session_state.search_submitted:
         after_start_date_str = after_start_date.strftime("%Y/%m/%d")
         after_end_date_str = after_end_date.strftime("%Y/%m/%d")
         
-        # Create date range strings for PubMed format
-        before_date_range = f'("{before_start_date_str}"[Date - Publication] : "{before_end_date_str}"[Date - Publication])'
-        after_date_range = f'("{after_start_date_str}"[Date - Publication] : "{after_end_date_str}"[Date - Publication])'
+        # Build queries using improved strategy if selected
+        if use_improved_search:
+            # Use both drug name and composition in both queries for better coverage
+            query_before = (f'("{composition}"[All Fields] OR "{drug_name}"[All Fields]) AND "{disease}"[All Fields] '
+                         f'AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])')
+            
+            query_after = (f'("{drug_name}"[All Fields] OR "{composition}"[All Fields]) '
+                         f'AND "{disease}"[All Fields] ')
+        else:
+            # Original simpler query strategy
+            query_before = (f'"{composition}"[All Fields] AND "{disease}"[All Fields] '
+                         f'AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])')
+            
+            query_after = (f'("{drug_name}"[All Fields] OR "{composition}"[All Fields]) '
+                         f'AND "{disease}"[All Fields] ')
         
-        # Build advanced queries using our new function
-        query_before = build_advanced_pubmed_query(
-            drug_name=drug_name,
-            composition=composition,
-            disease=disease,
-            company="" if not include_company else company,  # Only include company if checked
-            date_range=before_date_range
-        )
-        
-        query_after = build_advanced_pubmed_query(
-            drug_name=drug_name,
-            composition=composition,
-            disease=disease,
-            company="" if not include_company else company,  # Only include company if checked
-            date_range=after_date_range
-        )
+        # Add company to query if requested
+        if include_company:
+            query_after += f'AND "{company}"[All Fields] '
+            
+        query_after += f'AND ("{after_start_date_str}"[pdat] : "{after_end_date_str}"[pdat])'
         
         st.subheader("Search Queries")
         st.code(f"Before Approval: {query_before}")
@@ -2330,8 +2185,6 @@ if submitted or st.session_state.search_submitted:
                 ### Key Features
                 
                 - **Precision Date Handling**: Uses month-level precision to accurately categorize publications
-                - **Advanced Search Strategy**: Robust query building that captures variations in drug names, compositions, and disease terms
-                - **Comprehensive Article Inclusion**: Includes all articles, even those without author or affiliation information
                 - **Flexible Date Ranges**: Customizable time periods before and after FDA approval
                 - **Smart Search Strategy**: Includes both brand name and compound name for comprehensive results
                 - **DOI Information**: Includes DOI for each article when available

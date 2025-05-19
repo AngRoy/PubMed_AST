@@ -1,4 +1,3 @@
-import streamlit as st
 import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -165,7 +164,8 @@ def is_dataframe_empty(df):
         return True
     if not isinstance(df, pd.DataFrame):
         return True
-    return df.empty
+    return df.emptyimport streamlit as st
+
 # ------------------ PubMed Retrieval Functions ------------------
 
 DB = 'pubmed'
